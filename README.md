@@ -14,6 +14,7 @@ on the cluster (CarPlay AltScreen and the Android Auto cluster display).
 ## Contents
 
 - [Features](#features)
+- [Supported units](#supported-units)
 - [Requirements](#requirements)
 - [Build](#build)
 - [Install](#install)
@@ -54,6 +55,16 @@ CarPlay or Android Auto automatically.
 Developed and tested on an **Audi A5 (F5) with MU1329** (`MHI2Q_ER_AUG22_P5152`) firmware. Other MHI2Q
 firmware and cluster layouts are untested; the Java patch is always built against
 your own unit's HMI (see [Build](#build)), but cluster geometry may need calibration.
+
+## Supported units
+
+Units the mod has been run on. Other MHI2Q firmware may work too; the Java patch is
+built against your own unit's HMI, but cluster geometry may need calibration.
+
+| Firmware train | Vehicle | Notes |
+| --- | --- | --- |
+| `MHI2Q_ER_AUG22_P5152` | Audi A5 (F5), MU1329 | development unit; all features tested |
+| `MHI2Q_ER_AUG22_P5092` | | |
 
 ## Requirements
 
