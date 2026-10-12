@@ -107,7 +107,13 @@
 #define ALT111_DEFAULT_ALLOW_EPHEMERAL 0
 #define ALT111_DEFAULT_WIDTH 1440
 #define ALT111_DEFAULT_HEIGHT 540
-#define ALT111_DEFAULT_WIDTH_MM 290
+/*
+ * Physical size: 320x120 mm, as MIBSI (MU1329) and chefranov's A3 package report
+ * for this 12.3" VC, not the real ~290x108 mm panel. iOS scales the cluster UI
+ * from it; with 290 mm the Google Maps logo / Sygic puck sat behind the VC bottom
+ * bar (issue #9). Override with /mnt/app/root/mibr-carplay111-physical ("w h").
+ */
+#define ALT111_DEFAULT_WIDTH_MM 320
 /*
  * Defaults now = the commercial MHI2Q package's view-area table (MU1329 Cinemo,
  * libmhi2qcarplaycluster.so, same 1440x540 canvas; quoted by joeyQuery/
@@ -340,6 +346,7 @@ static int g_width_mm = ALT111_DEFAULT_WIDTH_MM;
 static int g_height_mm = (ALT111_DEFAULT_WIDTH_MM * ALT111_DEFAULT_HEIGHT) / ALT111_DEFAULT_WIDTH;
 static int g_fps = 30;
 static const char *g_fps_override_path = "/mnt/app/root/mibr-carplay111-fps";
+static const char *g_physical_override_path = "/mnt/app/root/mibr-carplay111-physical";
 static int g_auto_show = 0;
 /* 0 = leave /info byte-for-byte stock (no AltScreen advertisement). Diagnostic
  * lever: if a sender only works with this off, the advertisement is the cause. */
@@ -1230,8 +1237,34 @@ static int current_advertised_fps(void)
     if(n<=0)return g_fps;
     b[n]='\0';
     v=atoi(b);
-    if(v==20||v==25||v==30)return v;
+    /* 5..60, like chefranov's /mnt/app/altscreen_fps. Above 30 is at own risk:
+     * some MHI2Q builds crash at 60 (yuedizhibo V3.5Fix2 went back to 30). */
+    if(v>=5&&v<=60)return v;
     return g_fps;
+}
+
+/* Physical size from /mnt/app/root/mibr-carplay111-physical: "w h" in mm, or
+ * just "w" (h then follows the pixel aspect). Read per /info like the fps. */
+static void current_physical_mm(int *w_mm, int *h_mm)
+{
+    char b[32];
+    int fd, w=0, h=0;
+    ssize_t n;
+
+    *w_mm=g_width_mm; *h_mm=g_height_mm;
+    fd=open(g_physical_override_path,O_RDONLY);
+    if(fd<0)return;
+    n=read(fd,b,sizeof(b)-1);
+    close(fd);
+    if(n<=0)return;
+    b[n]='\0';
+    if(sscanf(b,"%d %d",&w,&h)<1)return;
+    if(h<=0 && g_width>0)h=(w*g_height)/g_width;
+    if(w<50||w>1000||h<20||h>1000){
+        logf_u2("GEN2 physical override invalid w=%d h=%d; using %dx%d",w,h,g_width_mm,g_height_mm);
+        return;
+    }
+    *w_mm=w; *h_mm=h;
 }
 
 /* ASCII compare of a CFString. Local so this works before the flight helpers. */
@@ -2674,10 +2707,11 @@ CFDictionaryRef AirPlayCopyServerInfo(AirPlayReceiverSessionRef session, CFArray
     CFStringRef kdisplays=NULL;
     CFArrayRef old=NULL;
     CFMutableArrayRef displays=NULL;
-    int advertised_fps;
+    int advertised_fps, width_mm, height_mm;
 
     gen2_runtime_ready();
     advertised_fps=current_advertised_fps();
+    current_physical_mm(&width_mm,&height_mm);
     if(!g_real_serverinfo)g_real_serverinfo=(fn_serverinfo_t)sym_next("AirPlayCopyServerInfo");
     if(!g_real_serverinfo){
         logf_u2("AirPlayCopyServerInfo stock delegate unavailable");
@@ -2753,8 +2787,8 @@ CFDictionaryRef AirPlayCopyServerInfo(AirPlayReceiverSessionRef session, CFArray
         set_i64(alt,"features",(int64_t)g2_profile.features);
         set_i64(alt,"widthPixels",(int64_t)g2_profile.width);
         set_i64(alt,"heightPixels",(int64_t)g2_profile.height);
-        set_i64(alt,"widthPhysical",(int64_t)g2_profile.width_mm);
-        set_i64(alt,"heightPhysical",(int64_t)g2_profile.height_mm);
+        set_i64(alt,"widthPhysical",(int64_t)width_mm);
+        set_i64(alt,"heightPhysical",(int64_t)height_mm);
         set_str(alt,"uuid",g_alt_uuid);
         set_str(alt,"initialURL",active_url);
         add_alt_suggest_ui_urls(alt);
@@ -2765,7 +2799,7 @@ CFDictionaryRef AirPlayCopyServerInfo(AirPlayReceiverSessionRef session, CFArray
         logf_u2("GEN2 /info ready: root=altScreen%s type=%u maxFPS=%u features=%u input=none geometry=%ux%u physical=%ux%u uuid=%s url=%s",
                 g_viewareas?"+viewAreas":"",
                 g2_profile.type,(unsigned)advertised_fps,g2_profile.features,
-                g2_profile.width,g2_profile.height,g2_profile.width_mm,g2_profile.height_mm,
+                g2_profile.width,g2_profile.height,(unsigned)width_mm,(unsigned)height_mm,
                 g_alt_uuid,active_url);
     }else{
         logf_u2("IRC-parity /info: display clone failed");

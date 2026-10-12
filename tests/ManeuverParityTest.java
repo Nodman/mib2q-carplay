@@ -31,6 +31,16 @@ public final class ManeuverParityTest {
         check(ManeuverMapper.map(8,-1,0,0,false)[1]==224,"missing RHT off-ramp");
         check(ManeuverMapper.map(20,-1,0,0,true)[1]==32,"real -1 left end-of-road");
         check(ManeuverMapper.map(20,-1,0,0,false)[1]==64,"missing left end-of-road");
+        /* Issue #9: the icon does not depend on junctionType (MIBSI parity);
+         * -1 = the app did not send JunctionType. */
+        for(int j=-1;j<=2;j++){
+            check(ManeuverMapper.map(1,-90,j,0,true)[0]==13,"left turn must keep TURN j="+j);
+            check(ManeuverMapper.map(2,90,j,0,true)[1]==192,"right turn must keep RIGHT j="+j);
+            check(ManeuverMapper.map(8,-30,j,0,true)[0]==13,"off-ramp must keep TURN j="+j);
+            check(ManeuverMapper.map(30,-90,j,0,true)[0]==21,"roundabout exit RHT j="+j);
+            check(ManeuverMapper.map(30,-90,j,1,true)[0]==22,"roundabout exit LHT j="+j);
+            check(ManeuverMapper.map(7,0,j,0,true)[0]==26,"exit roundabout j="+j);
+        }
         Method roads=Class.forName("com.luka.carplay.rgd.SideStreets").getDeclaredMethod(
             "calcSideStreetsBytes",Integer.TYPE,Integer.TYPE,Integer.TYPE,int[].class,Integer.TYPE);
         roads.setAccessible(true);
@@ -91,7 +101,11 @@ public final class ManeuverParityTest {
         a.reset();check(send(a,a.state(8,30,0,0,0,crowded)),"bounded highway roads");b=a.pendingPacket();
         check(b[7]==18 && angle(b,42)==0,"reserve final wire slot for continuing highway");
         for(int i=0;i<17;i++)check(angle(b,8+2*i)==2*crowded[i],"keep original branch order");
-        b=packet(a,1,-90,-1,0); check(b[2]==0 && b[7]==0,"NO_INFO must be empty in renderer");
+        /* Issue #9: a missing junctionType (-1) renders the same turn as an
+         * intersection (MIBSI parity), not NO_INFO. */
+        byte[] j0=packet(a,1,-90,0,0);
+        b=packet(a,1,-90,-1,0);
+        check(b[2]!=0 && Arrays.equals(b,j0),"missing junctionType keeps the turn arrow");
         b=packet(a,28,-67,1,0);
         check((b[1]&4)!=0 && angle(b,4)==-134 && (b[1]&16)!=0,"raw circle exit retains exact degrees and enables snap");
         for(int dir=0;dir<256;dir+=16) {

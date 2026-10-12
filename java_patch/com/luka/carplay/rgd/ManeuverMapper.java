@@ -148,7 +148,8 @@ public class ManeuverMapper {
      * @param turnAngle    JunctionElementExitAngle (signed). Used for simple turn geometry;
      *                    for ramps only the sign chooses a side when the type has no side.
      *                    For roundabout exits 1..19 it is quantized to nearest 22.5deg and mapped to a 0..240 code.
-     * @param junctionType Junction type (0=intersection, 1=roundabout)
+     * @param junctionType Junction type (0=intersection, 1=roundabout, -1=not sent); not used
+     *                    for the icon choice
      * @param drivingSide  Driving side (0=RHT, 1=LHT)
      * @return int[2] = { mainElement, direction }
      */
@@ -165,16 +166,12 @@ public class ManeuverMapper {
         int direction;
 
         /*
-         * IMPORTANT (MHI3 parity):
-         * tbt_renderer sub_2B9C90 applies a strong junctionType gate.
-         *
-         * - junctionType==0: normal intersection mapping (turns/ramps/etc).
-         * - junctionType==1: only roundabout exit types (7, 28..46) are mapped here; most other
-         *   maneuver types become NO_INFO.
-         * - other junctionType values: NO_INFO.
-         *
-         * Some maneuver types are treated as "global" and mapped before that gate
-         * (follow-road, arrived, ferry, etc). We replicate the same ordering below.
+         * The icon is chosen from maneuverType, exit angle and driving side only,
+         * as the MHI2Q commercial package (MIBSI) does. MHI3 tbt_renderer
+         * (sub_2B9C90) additionally gates on junctionType (non-roundabout types
+         * -> NO_INFO unless junctionType==0), but third-party apps may omit the
+         * JunctionType field (State keeps -1) and then every ordinary turn lost
+         * its arrow (issue #9). junctionType is still used for side streets.
          */
 
         /* Explicit "not set" sentinel from our State init */
@@ -232,34 +229,17 @@ public class ManeuverMapper {
             return new int[] { mainElement, direction };
         }
 
-        /*
-         * JunctionType gate (see comment above):
-         * - For junctionType!=0, only allow the "roundabout exit" family for junctionType==1.
-         */
-        if (junctionType != JUNCTION_SINGLE_INTERSECTION) {
-            if (junctionType != JUNCTION_ROUNDABOUT) {
-                mainElement = NO_INFO;
-                direction = DIR_STRAIGHT;
-                return new int[] { mainElement, direction };
-            }
-
-            if (maneuverType == MT_EXIT_ROUNDABOUT) {
-                mainElement = (drivingSide == DRIVING_SIDE_LEFT) ? EXIT_ROUNDABOUT_TRS_LEFT : EXIT_ROUNDABOUT_TRS_RIGHT;
-                direction = (drivingSide == DRIVING_SIDE_LEFT) ? DIR_LEFT : DIR_RIGHT;
-                /* DSINavBap override is skipped for this type */
-                return new int[] { mainElement, direction };
-            }
-
-            if (maneuverType >= MT_ROUNDABOUT_EXIT_1 && maneuverType <= MT_ROUNDABOUT_EXIT_19) {
-                mainElement = (drivingSide == DRIVING_SIDE_LEFT) ? ROUNDABOUT_TRS_LEFT : ROUNDABOUT_TRS_RIGHT;
-                direction = directionFromAngle16(turnAngle);
-                /* DSINavBap override is skipped for this type */
-                return new int[] { mainElement, direction };
-            }
-
-            /* For any other maneuverType while junctionType==1, MHI3 returns NO_INFO. */
-            mainElement = NO_INFO;
-            direction = DIR_STRAIGHT;
+        /* Roundabout family, mapped from the type alone (no junctionType gate). */
+        if (maneuverType == MT_EXIT_ROUNDABOUT) {
+            mainElement = (drivingSide == DRIVING_SIDE_LEFT) ? EXIT_ROUNDABOUT_TRS_LEFT : EXIT_ROUNDABOUT_TRS_RIGHT;
+            direction = (drivingSide == DRIVING_SIDE_LEFT) ? DIR_LEFT : DIR_RIGHT;
+            /* DSINavBap override is skipped for this type */
+            return new int[] { mainElement, direction };
+        }
+        if (maneuverType >= MT_ROUNDABOUT_EXIT_1 && maneuverType <= MT_ROUNDABOUT_EXIT_19) {
+            mainElement = (drivingSide == DRIVING_SIDE_LEFT) ? ROUNDABOUT_TRS_LEFT : ROUNDABOUT_TRS_RIGHT;
+            direction = directionFromAngle16(turnAngle);
+            /* DSINavBap override is skipped for this type */
             return new int[] { mainElement, direction };
         }
 
@@ -362,7 +342,7 @@ public class ManeuverMapper {
                 break;
 
             default:
-                /* MHI3 sub_2B9C90: unknown junctionType gate -> NO_INFO(1) */
+                /* Unmapped maneuver type -> NO_INFO(1) */
                 mainElement = NO_INFO;
                 direction = DIR_STRAIGHT;
                 break;

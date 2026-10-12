@@ -15,6 +15,7 @@ on the cluster (CarPlay AltScreen and the Android Auto cluster display).
 
 - [Features](#features)
 - [Supported units](#supported-units)
+- [Tested wireless adapters](#tested-wireless-adapters)
 - [Requirements](#requirements)
 - [Build](#build)
 - [Install](#install)
@@ -64,7 +65,21 @@ built against your own unit's HMI, but cluster geometry may need calibration.
 | Firmware train | Vehicle | Notes |
 | --- | --- | --- |
 | `MHI2Q_ER_AUG22_P5152` | Audi A5 (F5), MU1329 | development unit; all features tested |
-| `MHI2Q_ER_AUG22_P5092` | | |
+| `MHI2Q_ER_AUG22_P5092` | MU1329 | wireless CarPlay tested, [report](https://github.com/kamgurgul/mib2q-carplay/issues/5) |
+
+## Tested wireless adapters
+
+Community-reported wireless CarPlay adapters that work (with v1.1, `MHI2Q_ER_AUG22_P5092`,
+MU1329, iPhone 14 Pro Max, iOS 27.0). Both needed an adapter firmware update first, and
+both give the main MMI display, the Virtual Cockpit map and navigation info in the cluster.
+Full details are in [issue #5](https://github.com/kamgurgul/mib2q-carplay/issues/5).
+
+| Adapter | Tested version | Startup / connection | Notes |
+| --- | --- | --- | --- |
+| Baseus Safe Journey Series Wireless CarPlay Adapter | build `26031311.2705.1` | fast | recommended by the reporter, [report](https://github.com/kamgurgul/mib2q-carplay/issues/5) |
+| Carlinkit 5.0 / 2Air | software `2025.12.29.1746`, hardware `U2AC822C0` | slow | works and is stable once connected, [report](https://github.com/kamgurgul/mib2q-carplay/issues/5) |
+
+Generic `smartBox-xxxx` dongles are known not to work; see [TODO](#todo).
 
 ## Requirements
 
@@ -278,7 +293,9 @@ The Java suites need `stock/base.jar` and a host JDK 8 in `stock/jdk/` (or set `
 
   A dongle that forwards the cluster stream would work without changes on the car side:
   `SETUP … types=111` in `/tmp/altscreen111.log` shows it. Open points: test other
-  adapters (reports mention OTTOCAST U2-AIR and AAWireless TWO+), check firmware updates,
+  adapters (reports mention OTTOCAST U2-AIR and AAWireless TWO+; Baseus Safe Journey and
+  Carlinkit 5.0 / 2Air are confirmed working, see
+  [Tested wireless adapters](#tested-wireless-adapters)), check firmware updates,
   and look at custom firmware for Carlinkit-class hardware
   ([ludwig-v/wireless-carplay-dongle-reverse-engineering](https://github.com/ludwig-v/wireless-carplay-dongle-reverse-engineering)).
 - [ ] **Android Auto on other firmware.** The cluster map needs a receiver profile per `gal`

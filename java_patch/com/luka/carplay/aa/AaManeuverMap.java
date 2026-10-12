@@ -192,7 +192,7 @@ public final class AaManeuverMap {
         } else {
             m = r(MT_ENTER_ROUNDABOUT, 0, false);
         }
-        /* ManeuverMapper only accepts the roundabout-exit family with junctionType 1 */
+        /* junctionType 1 selects the roundabout side-street algorithm */
         m.junctionType = JUNCTION_ROUNDABOUT;
         m.drivingSide = lht ? DRIVING_SIDE_LEFT : DRIVING_SIDE_RIGHT;
         return m;

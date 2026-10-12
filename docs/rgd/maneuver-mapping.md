@@ -86,8 +86,7 @@ flowchart LR
 The `-1` `MT_NOT_SET` sentinel (the `RouteGuidance.State` default) -> `NO_SYMBOL / STRAIGHT`. The `255`
 wire sentinel (`MAN_TYPE_NOT_SET` in `rgd_tlv.h`) and any type outside `0-53` are rejected by
 `ManeuverMapper.isValidType()` in `BAPBridge` **before** `map()` is ever called. A valid in-range type
-that falls through the switch (e.g. a roundabout-family type arriving with the wrong `junctionType`) ->
-`NO_INFO / STRAIGHT`.
+that falls through the switch -> `NO_INFO / STRAIGHT`.
 
 ## 📌 Signed exit angle is the primary direction rule
 
@@ -121,10 +120,13 @@ main road (`RendererMapper.withForwardRoad`) - see [maneuver-renderer](../cluste
 (`-1` without presence) is normalized to the `1000` "absent" sentinel. `LEFT/RIGHT_TURN_AT_END` keep
 their end-of-road direction (not coarsened by the DSI override).
 
-## 🔐 Junction gate
+## 🔐 No junction gate
 
-For `junctionType != 0`, only the roundabout-exit family (`junctionType == 1`) is allowed through;
-other junction types fall back so a non-roundabout maneuver never renders a roundabout icon.
+The icon is chosen from `maneuverType`, exit angle and driving side only, as MIBSI does. MHI3's
+`tbt_renderer` also gates on `junctionType` (non-roundabout types -> `NO_INFO` unless it is `0`), but
+third-party apps (e.g. Sygic) may omit the JunctionType field; `State` then keeps `-1` and every ordinary
+turn lost its arrow ([#9](https://github.com/kamgurgul/mib2q-carplay/issues/9)). `junctionType` still
+selects the side-street algorithm (`SideStreets`: `0` intersection, `1` roundabout, else none).
 
 ## ⚠️ Product gap
 
