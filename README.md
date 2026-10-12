@@ -69,10 +69,7 @@ built against your own unit's HMI, but cluster geometry may need calibration.
 
 ## Tested wireless adapters
 
-Community-reported wireless CarPlay adapters that work (with v1.1, `MHI2Q_ER_AUG22_P5092`,
-MU1329, iPhone 14 Pro Max, iOS 27.0). Both needed an adapter firmware update first, and
-both give the main MMI display, the Virtual Cockpit map and navigation info in the cluster.
-Full details are in [issue #5](https://github.com/kamgurgul/mib2q-carplay/issues/5).
+Community-reported wireless CarPlay adapters that work 
 
 | Adapter | Tested version | Startup / connection | Notes |
 | --- | --- | --- | --- |
