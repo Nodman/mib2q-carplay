@@ -32,6 +32,8 @@ safearea|safearea|Apply SafeArea from SD (carplay_safearea*.conf)
 safearea_reset|safearea_reset|Reset SafeArea to built-in
 singleview|singleview|Classic-view SafeArea ON / OFF (2 ViewAreas)
 reacquire|reacquire|Re-request cluster map (test app switching)
+cluster_eta_on|cluster_eta_on|Cluster ETA ON (iOS arrival / time / distance)
+cluster_eta_off|cluster_eta_off|Cluster ETA OFF (default)
 hwdec|hwdec|HW decoder ON / OFF (toggle, default ON)
 aa_cluster_on|aa_cluster_on|Android Auto cluster map ON
 aa_cluster_off|aa_cluster_off|Android Auto cluster map OFF
@@ -43,7 +45,7 @@ uninstall|uninstall|Uninstall CarPlay (restore stock)
 remove_menu|remove_menu|Remove this menu
 "
 # mod folders bundled as actions/<name>/custom.sh
-ACTIONS="install uninstall logging extract_lsd altscreen_on altscreen_off rgd_enable rgd_disable altscreen_grid altscreen_safearea aa_cluster_on aa_cluster_off touchpad_dpad_on touchpad_dpad_off"
+ACTIONS="install uninstall logging extract_lsd altscreen_on altscreen_off rgd_enable rgd_disable altscreen_grid altscreen_safearea aa_cluster_on aa_cluster_off touchpad_dpad_on touchpad_dpad_off cluster_eta_on cluster_eta_off"
 
 echo "=== GEM menu: staging $OUT ==="
 rm -rf "$OUT"

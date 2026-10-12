@@ -26,7 +26,7 @@ for sh in $shells; do
         f=$G/${p#/mnt/app/eso/hmi/engdefs/}
         [ -x "$f" ] || fail "$sh" "button target missing/not executable: $p"
     done
-    for a in install uninstall logging extract_lsd altscreen_on altscreen_off rgd_enable rgd_disable altscreen_grid altscreen_safearea aa_cluster_on aa_cluster_off touchpad_dpad_on touchpad_dpad_off; do
+    for a in install uninstall logging extract_lsd altscreen_on altscreen_off rgd_enable rgd_disable altscreen_grid altscreen_safearea aa_cluster_on aa_cluster_off touchpad_dpad_on touchpad_dpad_off cluster_eta_on cluster_eta_off; do
         cmp -s "$ROOT/mods/${a}_MoreIncredibleBash/mod/custom.sh" "$G/scripts/carplay/actions/$a/custom.sh" \
             || fail "$sh" "action $a differs from its mod"
     done
@@ -39,8 +39,16 @@ for sh in $shells; do
     mkdir -p "$T/sd"; echo h > "$T/src/carplay_hook.log"
     CP_GEM_DIR=$G CP_CARDS="$T/nocard $T/sd" CP_LOG_SRC=$T/src "$sh" "$R" logs > "$T/out" 2>&1; rc=$?
     [ $rc -eq 0 ] && [ -f "$T/sd/carplay_logs/001/tmp/carplay_hook.log" ] || { cat "$T/out"; fail "$sh" "logs not saved to card rc=$rc"; }
+    # cluster ETA: ON writes showETA=yes then the query marker, OFF removes both
+    mkdir -p "$T/nav"
+    CP_GEM_DIR=$G CP_NAV_ROOT=$T/nav "$sh" "$R" cluster_eta_on > "$T/out" 2>&1; rc=$?
+    [ $rc -eq 0 ] && [ -f "$T/nav/mibr-carplay111-nav-query.enabled" ] && [ "$(cat "$T/nav/mibr-carplay111-nav.showETA")" = yes ] \
+        || { cat "$T/out"; fail "$sh" "cluster_eta_on rc=$rc"; }
+    CP_GEM_DIR=$G CP_NAV_ROOT=$T/nav "$sh" "$R" cluster_eta_off > "$T/out" 2>&1; rc=$?
+    [ $rc -eq 0 ] && [ ! -e "$T/nav/mibr-carplay111-nav-query.enabled" ] && [ ! -e "$T/nav/mibr-carplay111-nav.showETA" ] \
+        || { cat "$T/out"; fail "$sh" "cluster_eta_off rc=$rc"; }
     CP_GEM_DIR=$G "$sh" "$R" remove_menu > /dev/null 2>&1; rc=$?
     set -e
     [ $rc -eq 0 ] && [ ! -e "$G/mib2q-carplay.esd" ] && [ ! -d "$G/scripts/carplay" ] || fail "$sh" "remove_menu rc=$rc"
 done
-echo "GEM menu: install, button targets, actions = mods, card discovery, remove:$shells PASS"
+echo "GEM menu: install, button targets, actions = mods, card discovery, cluster ETA, remove:$shells PASS"
