@@ -10,7 +10,7 @@ Map of Content for the reverse-engineering and implementation notes. Each note c
 every factual claim is validated against a source (code / firmware / iOS binary) and states only the
 final verified fact. `reconciles:` frontmatter records which legacy docs were folded in.
 
-> **All topics seeded [x]** - 34 notes. `(!)` items inside notes are real product TODOs, not doc gaps.
+> **All topics seeded [x]** - 35 notes. `(!)` items inside notes are real product TODOs, not doc gaps.
 
 ## 🗂️ [architecture](architecture.md) - process topology, threading, boot / init - build, test & deploy  [x]
 
@@ -35,6 +35,7 @@ final verified fact. `reconciles:` frontmatter records which legacy docs were fo
 - [compositing](cluster/compositing.md) - maneuver overlay over native map, HU->MOST->VC H.264
 - [maneuver-renderer](cluster/maneuver-renderer.md) - :19800 protocol, C++ scene engine, visible area, watchdog
 - [kdk-geometry](cluster/kdk-geometry.md) - KDK backings 101/102, VC Fct44/Fct54-driven visibility & stage, HU geometry table
+- [native-arrows](cluster/native-arrows.md) - default (3D arrow opt-in): KDK hidden, VC draws its own Audi arrows from FctID 23
 
 ## 🤖 Android Auto  [x]
 - [overview](android-auto/overview.md) - what works without / with the gal hook, topology, Java bridge, cluster map, switches, logs

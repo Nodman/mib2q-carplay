@@ -152,6 +152,12 @@ public class BAPBridge {
     private boolean nativeAbortIssued = false;
     private int nativeStopLogState = -1;
 
+    /* Native VC arrows (issue #3), latched per route at onStart: no maneuver_render,
+     * no ctx 80, KDK kept hidden so the VC draws its own icon from FctID 23. */
+    private volatile boolean nativeArrows = false;
+    /* Native mode only: last FctID 23 choice was FOLLOW_STREET (maneuver beyond prepare). */
+    private boolean nativeFollowSent = false;
+
     private ClusterService csRef;
     private KOMOService komoService;
     private RendererServer rendererClient;
@@ -710,14 +716,18 @@ public class BAPBridge {
             /* Block native route-guidance BAP stream during CarPlay RG. */
             com.luka.carplay.core.ScreenNavStatusGate.setRouteGuidanceBlocked(true);
 
+            nativeArrows = NativeArrows.isEnabled();
+            nativeFollowSent = false;
+
             /* Start renderer FIRST — maneuver_render owns its own managed
              * displayable 98 (dc[80]={98,...}); bringing it up before we set
              * rgActive/rgiValid avoids a one-frame KDK flicker. */
-            startCustomRenderer();                 /* non-blocking; readiness edges drive completion */
+            if (!nativeArrows) startCustomRenderer();  /* non-blocking; readiness edges drive completion */
 
             /* Now safe to set cluster state flags — our window is displayable 98;
              * ctx 80 makes the encoder read it via setActiveDisplayable(4,98). */
             forceClusterRouteInfoState(true);
+            if (nativeArrows) hideKdkForNativeArrows();
 
             /*
              * Guidance start -- BAP text overlays for HUD + VC text.
@@ -734,7 +744,7 @@ public class BAPBridge {
             sendExitView();                                                          /* FctID 49 */
 
             Log.i(TAG, "Started (rgType=" + ACTIVE_RGTYPE
-                + ", cr=" + customRendererStarted + ")");
+                + ", cr=" + customRendererStarted + ", nativeArrows=" + nativeArrows + ")");
             bapSessionStarted = true;
             /* Keep the VC's empty "---" shell out while route text is pending.
              * Clear the separate FctID 20 layer; never synthesize a text arrow. */
@@ -773,6 +783,7 @@ public class BAPBridge {
         /* Release the rgActive overlay here, not inside stopCustomRenderer: a throw in the
          * renderer teardown must not leave shared HMI state forged. */
         forceClusterRouteInfoState(false);
+        NativeArrows.setKdkSuppressed(false);
         forceGfxAvailable(false);
         bapSessionStarted = false;
         rendererPrimed = false;
@@ -863,6 +874,7 @@ public class BAPBridge {
 
             stopCustomRenderer(preserveSurface);
             forceClusterRouteInfoState(false);
+            NativeArrows.setKdkSuppressed(false);
             /* CarPlay session ending — release the renderer listen socket
              * (port :19800).  stopCustomRenderer keeps it bound for fast
              * route restarts within a session; full session shutdown
@@ -1012,6 +1024,14 @@ public class BAPBridge {
                 }
             }
 
+            /* Native VC arrows: like Audi navigation, show "follow road" until the next
+             * maneuver enters the prepare zone; the real icon replaces it there. */
+            boolean nativeFollow = nativeArrows && hasUsableDistance && !isArrival
+                && distM > prepareThreshold;
+            if (nativeArrows && showManeuver && hasManeuverList && nativeFollow != nativeFollowSent) {
+                dirty |= RouteGuidance.State.DIRTY_MANEUVER_ICON;
+            }
+
             /*
              * 1. Maneuver icons (FctID 23)
              */
@@ -1023,10 +1043,15 @@ public class BAPBridge {
                     sendNoSymbol();
                     descriptorSent = true;
                 } else if (hasManeuverList) {
-                    if (showManeuver) {
+                    if (showManeuver && nativeFollow) {
+                        sendFollowStreet();
+                        nativeFollowSent = true;
+                        descriptorSent = true;
+                    } else if (showManeuver) {
                         /* Always expose the real next maneuver. Distance affects
                          * only bargraph/action timing, never icon selection. */
                         sendManeuvers(s);
+                        nativeFollowSent = false;
                         descriptorSent = true;
                     } else if (shouldClearManeuver) {
                         sendNoSymbol();
@@ -1134,7 +1159,9 @@ public class BAPBridge {
                     appConnectorNavi.updateManeuverState(0);
                 } else if (shouldClearManeuver || (hasManeuverList && showManeuver)) {
                     int bapState;
-                    if (showManeuver) {
+                    if (showManeuver && nativeFollow) {
+                        bapState = 1;   /* Follow */
+                    } else if (showManeuver) {
                         if (hasUsableDistance && bargraphDenominatorM > 0 && distM <= bargraphDenominatorM) {
                             bapState = 4;   /* Action */
                         } else {
@@ -1250,6 +1277,7 @@ public class BAPBridge {
      *  - the current TCP peer acknowledged at least one eglSwapBuffers frame.
      */
     public boolean isPresentationReady() {
+        if (nativeArrows) return bapSessionStarted;
         RendererServer r = rendererClient;
         return bapSessionStarted && customRendererStarted && r != null && r.isFrameReady();
     }
@@ -2021,7 +2049,7 @@ public class BAPBridge {
     private static final int CR_SEND_FAIL_THRESHOLD = 3;
 
     private synchronized boolean startCustomRenderer() {
-        if (csRef == null) {
+        if (csRef == null || nativeArrows) {
             return false;
         }
         try {
@@ -2087,6 +2115,21 @@ public class BAPBridge {
         } catch (Throwable t) {
             Log.w(TAG, "CR start failed: " + t.getClass().getName() + ": " + t.getMessage());
             return false;
+        }
+    }
+
+    /** True while this route runs in native VC arrow mode (no renderer, no ctx 80). */
+    public boolean isNativeArrows() { return nativeArrows; }
+
+    /** Hide the HU-rendered KDK slot so the VC falls back to its own maneuver icon,
+     *  and keep it hidden against VC re-open requests until the route ends. */
+    private void hideKdkForNativeArrows() {
+        NativeArrows.setKdkSuppressed(true);
+        try {
+            csRef.setKDKVisibility(false);
+            Log.i(TAG, "native VC arrows: KDK hidden");
+        } catch (Throwable t) {
+            Log.w(TAG, "native VC arrows: setKDKVisibility(false) failed: " + t);
         }
     }
 

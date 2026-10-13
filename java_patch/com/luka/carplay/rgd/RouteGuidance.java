@@ -539,7 +539,8 @@ public class RouteGuidance implements CarplayBus.Listener {
                  * for the text hold and position scroll, but no longer gates the context. */
                 presentationConfirmed = false;
                 rgActive = bap != null && bap.onStart();
-                com.luka.carplay.core.ScreenModule.setNavActive(rgActive);
+                /* Native VC arrows keep stock ctx 74: no overlay over the VC's own icon. */
+                com.luka.carplay.core.ScreenModule.setNavActive(rgActive && !bap.isNativeArrows());
                 if (!rgActive) {
                     if (!bapStartPendingLogged) {
                         Log.w(TAG, "RG activation pending: BAP start did not complete; keeping ctx 74");
@@ -787,7 +788,7 @@ public class RouteGuidance implements CarplayBus.Listener {
         if (!rgActive) {
             rgActive = bap.onStart();
             if (!rgActive) return true;
-            com.luka.carplay.core.ScreenModule.setNavActive(true);
+            com.luka.carplay.core.ScreenModule.setNavActive(!bap.isNativeArrows());
         }
 
         // FRAME_READY can win the race with the worker's first wake. Rebase

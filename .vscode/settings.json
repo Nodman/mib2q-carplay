@@ -16,6 +16,14 @@
     // de.audi.*/org.dsi.* errors disappear once the converted lsd.jxe jar is in
     // stock/ (see stock/README.md).
     "java.errors.incompleteClasspath.severity": "ignore",
+    // The patch targets the unit's Java 1.4-level class library and is built with
+    // scripts/build_java.sh (javac is clean), so the newer-JDK deprecation, raw-type
+    // and unused-member warnings are noise.
+    "java.settings.url": ".vscode/jdt-settings.prefs",
+    // tests/ and tests/stubs/ hold fixtures that shadow patch classes and are compiled
+    // by their own scripts, so keep them out of the language server's project.
+    "java.project.sourcePaths": ["java_patch"],
+    "java.jdt.ls.vmargs": "-XX:+UseParallelGC -XX:GCTimeRatio=4 -XX:AdaptiveSizePolicyWeight=90 -Dsun.zip.disableMemoryMapping=true -Xmx2G -Xms100m -Xlog:disable -Dfile.encoding=UTF-8",
     "java.project.referencedLibraries": [
         "stock/*.jar",
         "stock/libs/*.jar"
