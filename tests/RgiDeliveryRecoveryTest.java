@@ -22,19 +22,20 @@ public final class RgiDeliveryRecoveryTest {
         Method m=c.getDeclaredMethod(name,args);m.setAccessible(true);return m;
     }
     static class HUD implements InvocationHandler {
-        String failMethod;int failures;boolean lanes;int direction;int laneWrites;int bar;
+        String failMethod;int failures;boolean lanes;int direction,main;int laneWrites;int bar;
         public Object invoke(Object proxy,Method m,Object[] args) {
             if(m.getName().equals(failMethod) && failures-->0)throw new IllegalStateException("injected BAP failure");
             if(m.getName().equals("updateLaneGuidance")){lanes=(Boolean)args[0];laneWrites++;}
             if(m.getName().equals("updateManeuverDescriptor"))
-                direction=((CombiBAPNaviManeuverDescriptor[])args[0])[0].direction;
+                {direction=((CombiBAPNaviManeuverDescriptor[])args[0])[0].direction;
+                 main=((CombiBAPNaviManeuverDescriptor[])args[0])[0].mainElement;}
             if(m.getName().equals("updateDistanceToNextManeuver"))bar=(Integer)args[3];
             return null;
         }
     }
     static class Renderer extends RendererServer {
         volatile int failManeuvers,attempts,writes;
-        int failProgress,angle,disconnects,progressWrites,lastLevel,lastMode,lastProgress;
+        int failProgress,angle,icon,disconnects,progressWrites,lastLevel,lastMode,lastProgress;
         boolean lanes,ready=true;
         public boolean isReady(){return ready;}
         public boolean isFrameReady(){return ready;}
@@ -49,7 +50,7 @@ public final class RgiDeliveryRecoveryTest {
         }
         public boolean sendBapProgressManeuver(int icon,int dir,int exit,int side,int[] roads,
                 int level,int mode,int perspective,boolean refresh,boolean snap,int progress) {
-            attempts++;if(failManeuvers-->0)return false;writes++;angle=exit;
+            attempts++;if(failManeuvers-->0)return false;writes++;angle=exit;this.icon=icon;
             lastLevel=level;lastMode=mode;lastProgress=progress;return true;
         }
     }
@@ -92,12 +93,13 @@ public final class RgiDeliveryRecoveryTest {
         check(f.renderer.writes==writes,"retry replayed an already accepted transition");
     }
     static void failedManeuverAndSupersession()throws Exception {
-        Fixture f=new Fixture();f.renderer.failManeuvers=1;int progressWrites=f.renderer.progressWrites;
+        Fixture f=new Fixture();f.feed("dist_maneuver_m:n:1200\n"); // inside prepare: real arrow
+        f.renderer.failManeuvers=1;int progressWrites=f.renderer.progressWrites;
         f.feed("m0_ver:n:3\nm0_type:n:2\nm0_exit_angle:n:90\nm0_junction_type:n:0\n");
         check(f.hud.direction==ManeuverMapper.DIR_RIGHT && f.renderer.angle==-180,"failure fixture");
         check(f.state.dirtyMask!=0 && f.pending() && f.confirmed(),"renderer failure reported successful publication");
         check(f.renderer.progressWrites==progressWrites,"next maneuver progress painted previous arrow before enqueue");
-        f.feed("dist_maneuver_m:n:4900\n");
+        f.feed("dist_maneuver_m:n:1100\n");
         check(f.renderer.angle==180 && f.state.dirtyMask==0,"distance-only update lost pending maneuver");
         f.renderer.failManeuvers=1;
         f.feed("m0_ver:n:4\nm0_type:n:1\nm0_exit_angle:n:-90\nm0_junction_type:n:0\n");
@@ -126,7 +128,8 @@ public final class RgiDeliveryRecoveryTest {
         check(f.hud.bar==100 && f.renderer.progressWrites==writes,"blink crossed an unaccepted maneuver");
     }
     static void workerRetry()throws Exception {
-        final Fixture f=new Fixture();set(f.rg,"presentationConfirmed",false);
+        final Fixture f=new Fixture();f.feed("dist_maneuver_m:n:1200\n"); // inside prepare: real arrow
+        final int base=f.renderer.writes;set(f.rg,"presentationConfirmed",false);
         f.renderer.failManeuvers=100;
         f.feed("m0_ver:n:3\nm0_type:n:2\nm0_exit_angle:n:90\nm0_junction_type:n:0\n");
         check(!f.confirmed(),"cold presentation confirmed before maneuver delivery");
@@ -142,9 +145,9 @@ public final class RgiDeliveryRecoveryTest {
             check(retries>=2 && retries<=4,"failed replay spun or stopped retrying: "+retries);
             f.renderer.failManeuvers=0;
             long end=System.nanoTime()+2000000000L;
-            while(f.renderer.writes<2 && System.nanoTime()<end)Thread.sleep(10);
+            while(f.renderer.writes<base+1 && System.nanoTime()<end)Thread.sleep(10);
             synchronized(f.rg) {
-                check(f.renderer.writes==2 && f.confirmed() && f.state.dirtyMask==0,"worker did not converge without another iOS delta");
+                check(f.renderer.writes==base+1 && f.confirmed() && f.state.dirtyMask==0,"worker did not converge without another iOS delta");
             }
         } finally {
             set(f.rg,"running",false);Object lock=get(f.rg,"presentationLock");
@@ -153,11 +156,28 @@ public final class RgiDeliveryRecoveryTest {
         check(!worker.isAlive() && failure[0]==null,"recovery worker leaked or failed");
     }
     static void generationTransition()throws Exception {
-        Fixture f=new Fixture();int writes=f.renderer.writes;
+        Fixture f=new Fixture();f.feed("dist_maneuver_m:n:1200\n");int writes=f.renderer.writes;
         f.feed("route_generation:n:101\nroute_state:n:1\nmaneuver_count:n:1\nmaneuver_list:s:0\n"
-            +"m0_ver:n:2\nm0_type:n:1\nm0_exit_angle:n:-90\nm0_junction_type:n:0\ndist_maneuver_m:n:5000\n");
+            +"m0_ver:n:2\nm0_type:n:1\nm0_exit_angle:n:-90\nm0_junction_type:n:0\ndist_maneuver_m:n:1200\n");
         check(f.renderer.writes==writes+1,"same slot/version in new route suppressed transition");
         check(!f.hud.lanes && !f.renderer.lanes,"new route inherited old lane event");
+    }
+    static void followBeyondPrepare()throws Exception {
+        Fixture f=new Fixture(); // 5000 m, city step: beyond the 1500 m prepare zone
+        check(f.renderer.icon==RendererMapper.ICON_APPROACH && f.hud.main==ManeuverMapper.FOLLOW_STREET,
+            "far turn shown early in the maneuver box");
+        f.feed("dist_maneuver_m:n:1400\n");
+        int real=f.renderer.icon,angle=f.renderer.angle;
+        check(real!=RendererMapper.ICON_APPROACH && f.hud.main!=ManeuverMapper.FOLLOW_STREET,
+            "turn not revealed on entering prepare");
+        f.feed("dist_maneuver_m:n:5000\n");
+        check(f.renderer.icon==RendererMapper.ICON_APPROACH && f.hud.main==ManeuverMapper.FOLLOW_STREET,
+            "leaving prepare kept the turn");
+        int writes=f.renderer.writes;f.feed("dist_maneuver_m:n:4000\n");
+        check(f.renderer.writes==writes,"follow road resent outside prepare");
+        f.feed("dist_maneuver_m:n:1300\n");
+        check(f.renderer.icon==real && f.renderer.angle==angle && f.hud.main!=ManeuverMapper.FOLLOW_STREET,
+            "turn not re-pushed on re-entering prepare");
     }
     static void sourceTimeAge()throws Exception {
         Fixture f=new Fixture();f.feed("time_remaining_seconds:n:600\n");
@@ -174,7 +194,7 @@ public final class RgiDeliveryRecoveryTest {
         check((Long)remaining.invoke(f.bridge)>=600 && f.state.timeRemainingSampleSeconds>=sampled,"fresh estimate kept old age");
     }
     public static void main(String[] args)throws Exception {
-        Log.setLevel(-1);failedHudHide();failedManeuverAndSupersession();blinkPhase();workerRetry();generationTransition();sourceTimeAge();
-        System.out.println("RgiDeliveryRecoveryTest: shared HUD/renderer retry, latest state, no duplicate travel/flicker, backpressure, generation and source-time age PASS");
+        Log.setLevel(-1);failedHudHide();failedManeuverAndSupersession();blinkPhase();workerRetry();generationTransition();followBeyondPrepare();sourceTimeAge();
+        System.out.println("RgiDeliveryRecoveryTest: shared HUD/renderer retry, latest state, no duplicate travel/flicker, backpressure, generation, follow road beyond prepare and source-time age PASS");
     }
 }

@@ -9,7 +9,7 @@ import sun.misc.Unsafe;
 
 /** Native VC arrow mode (issue #3): FOLLOW_STREET beyond the prepare zone, the real
  * maneuver inside it, no renderer dependency, KDK suppression released on shutdown.
- * The default 3D-arrow mode keeps sending the real maneuver at every distance. */
+ * The default 3D-arrow mode uses the same FOLLOW_STREET/prepare-zone rule on FctID 23. */
 public final class NativeArrowsTest {
     public static final class HUD extends AppConnectorNavi {
         int main = -1, state = -1, descriptors;
@@ -85,11 +85,13 @@ public final class NativeArrowsTest {
         check(!arrow.isPresentationReady(), "3D-arrow mode ready without a renderer");
         RouteGuidance.State d = route(ManeuverMapper.MT_LEFT_TURN, 900);
         move(arrow, d, 5000, icon);
-        check(stock.main != ManeuverMapper.FOLLOW_STREET && stock.state == 2, "3D-arrow mode hid the real maneuver");
+        check(stock.main == ManeuverMapper.FOLLOW_STREET && stock.state == 1, "3D-arrow mode showed a far turn early");
+        move(arrow, d, 1400, dist);
+        check(stock.main != ManeuverMapper.FOLLOW_STREET && stock.state == 2, "3D-arrow mode hid the turn inside prepare");
 
         NativeArrows.setKdkSuppressed(true);
         nat.onShutdown();
         check(!NativeArrows.isKdkSuppressed(), "shutdown left the KDK suppressed");
-        System.out.println("NativeArrowsTest: follow road beyond prepare (city/highway), turn inside, arrival kept, 3D mode unchanged, no renderer gate, KDK released PASS");
+        System.out.println("NativeArrowsTest: follow road beyond prepare (city/highway), turn inside, arrival kept, 3D mode follows too, no renderer gate, KDK released PASS");
     }
 }

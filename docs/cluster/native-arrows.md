@@ -49,7 +49,7 @@ and GEM buttons.
 | cluster context | ctx 80 (or 82 with AltScreen) | stays ctx 74 (or 81) |
 | `isPresentationReady()` | BAP + renderer FRAME_READY | BAP start only |
 | KDK | VC opens it (Fct44) | `setKDKVisibility(false)` at start; VC open requests answered "hidden" (`ClusterService.setSupplementaryMap`) until route end |
-| FctID 23 far from the turn | real next maneuver | `FOLLOW_STREET` beyond prepare (1.5 km city / 3 km highway), ManeuverState 1 |
+| FctID 23 / maneuver box far from the turn | `FOLLOW_STREET` (box: approach arrow) beyond prepare (1.5 km city / 3 km highway), ManeuverState 1 | `FOLLOW_STREET` beyond prepare (1.5 km city / 3 km highway), ManeuverState 1 |
 | FctID 18/19/21/22/24/46/55 | unchanged | unchanged |
 
 The suppression (`NativeArrows.isKdkSuppressed`) is released in `shutdown()` and in the failed-start

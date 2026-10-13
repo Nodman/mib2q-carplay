@@ -94,8 +94,8 @@ public class BAPBridge {
     private long lastTimeRemainingSampleSeconds = -1L;
     private int lastDistanceToDestinationM = -1;
 
-    /* Approach mode controls only bargraph/blink timing. The real next-maneuver
-     * descriptor remains visible at every distance. */
+    /* Approach mode drives bargraph/blink timing and icon choice: beyond the
+     * prepare threshold the cluster shows FOLLOW_STREET, the real maneuver inside. */
     private boolean inApproachZone = false;
     /* Track the primary maneuver's slot identity so we know when iOS
      * actually swapped the head of the list vs. just reordered/extended it.
@@ -155,8 +155,8 @@ public class BAPBridge {
     /* Native VC arrows (issue #3), latched per route at onStart: no maneuver_render,
      * no ctx 80, KDK kept hidden so the VC draws its own icon from FctID 23. */
     private volatile boolean nativeArrows = false;
-    /* Native mode only: last FctID 23 choice was FOLLOW_STREET (maneuver beyond prepare). */
-    private boolean nativeFollowSent = false;
+    /* Last FctID 23 choice was FOLLOW_STREET (maneuver beyond prepare). */
+    private boolean followSent = false;
 
     private ClusterService csRef;
     private KOMOService komoService;
@@ -717,7 +717,7 @@ public class BAPBridge {
             com.luka.carplay.core.ScreenNavStatusGate.setRouteGuidanceBlocked(true);
 
             nativeArrows = NativeArrows.isEnabled();
-            nativeFollowSent = false;
+            followSent = false;
 
             /* Start renderer FIRST — maneuver_render owns its own managed
              * displayable 98 (dc[80]={98,...}); bringing it up before we set
@@ -1024,11 +1024,11 @@ public class BAPBridge {
                 }
             }
 
-            /* Native VC arrows: like Audi navigation, show "follow road" until the next
-             * maneuver enters the prepare zone; the real icon replaces it there. */
-            boolean nativeFollow = nativeArrows && hasUsableDistance && !isArrival
-                && distM > prepareThreshold;
-            if (nativeArrows && showManeuver && hasManeuverList && nativeFollow != nativeFollowSent) {
+            /* Like Audi navigation, show "follow road" until the next maneuver enters
+             * the prepare zone (1.5 km city / 3 km highway); the real icon replaces it
+             * there.  Applies to the native VC arrows and the 3D maneuver box alike. */
+            boolean follow = hasUsableDistance && !isArrival && distM > prepareThreshold;
+            if (showManeuver && hasManeuverList && follow != followSent) {
                 dirty |= RouteGuidance.State.DIRTY_MANEUVER_ICON;
             }
 
@@ -1043,15 +1043,13 @@ public class BAPBridge {
                     sendNoSymbol();
                     descriptorSent = true;
                 } else if (hasManeuverList) {
-                    if (showManeuver && nativeFollow) {
+                    if (showManeuver && follow) {
                         sendFollowStreet();
-                        nativeFollowSent = true;
+                        followSent = true;
                         descriptorSent = true;
                     } else if (showManeuver) {
-                        /* Always expose the real next maneuver. Distance affects
-                         * only bargraph/action timing, never icon selection. */
                         sendManeuvers(s);
-                        nativeFollowSent = false;
+                        followSent = false;
                         descriptorSent = true;
                     } else if (shouldClearManeuver) {
                         sendNoSymbol();
@@ -1159,7 +1157,7 @@ public class BAPBridge {
                     appConnectorNavi.updateManeuverState(0);
                 } else if (shouldClearManeuver || (hasManeuverList && showManeuver)) {
                     int bapState;
-                    if (showManeuver && nativeFollow) {
+                    if (showManeuver && follow) {
                         bapState = 1;   /* Follow */
                     } else if (showManeuver) {
                         if (hasUsableDistance && bargraphDenominatorM > 0 && distM <= bargraphDenominatorM) {
@@ -1225,8 +1223,8 @@ public class BAPBridge {
                 appConnectorNavi.updateDestinationInfo(destInfo);
             }
 
-            /* 10. maneuver_render: the real maneuver stays visible at every
-             * distance; approach state controls only arrow progress timing. */
+            /* 10. maneuver_render: follow road beyond the prepare zone, the real
+             * maneuver inside it; approach state also drives arrow progress timing. */
             /* Non-blocking state advance.  READY/FRAME_READY also wakes RouteGuidance when no
              * further iOS RGI delta arrives (the cold-boot case). */
             if (!customRendererStarted && csRef != null) startCustomRenderer();
@@ -1249,7 +1247,8 @@ public class BAPBridge {
                 boolean iconChanged = false;
                 if ((dirty & crIconMask) != 0) {
                     if (showManeuver && hasManeuverList && !explicitClear && !shouldClearManeuver) {
-                        iconChanged = updateRendererIfChanged(s, bargraphDenominatorM);
+                        iconChanged = follow ? sendRendererFollowStreet()
+                            : updateRendererIfChanged(s, bargraphDenominatorM);
                     }
                 }
                 /* Maneuver packets carry initial progress. Replays and distance
@@ -2272,6 +2271,31 @@ public class BAPBridge {
             noteRendererSendResult(false);
             return false;
         }
+    }
+
+    /** FOLLOW_STREET for maneuver_render, mirroring BAP sendFollowStreet(). Clears the
+     * slot identity so the real maneuver pushes in on entering the prepare zone. */
+    private synchronized boolean sendRendererFollowStreet() {
+        if (rendererClient == null || !customRendererStarted) return false;
+        if (lastCrIcon == RendererMapper.ICON_APPROACH && lastCrIdx == -1) {
+            rendererManeuverPending = false;
+            return false;
+        }
+        boolean ok = rendererClient.sendBapProgressManeuver(RendererMapper.ICON_APPROACH, 0, 0, 0,
+            null, 0, 0, 1, false, false, RendererServer.PROGRESS_OFF);
+        if (ok) {
+            lastCrIcon = RendererMapper.ICON_APPROACH;
+            lastCrDirection = 0;
+            lastCrExitAngle = 0;
+            lastCrDrivingSide = 0;
+            lastCrVer = -1;
+            lastCrIdx = -1;
+            lastCrJunctionAngles = null;
+            lastCrSnapToRoad = false;
+            rendererManeuverPending = false;
+        }
+        noteRendererSendResult(ok);
+        return ok;
     }
 
     /**
