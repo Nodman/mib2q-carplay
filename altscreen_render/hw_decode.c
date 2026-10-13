@@ -72,6 +72,7 @@ struct altr_hwdec {
     pthread_cond_t cond;
     OMX_U32 state;          /* last state reached (EventCmdComplete) */
     volatile int failed;
+    volatile int wedged;    /* the video hardware stopped answering: never call into it again */
     int executing;
     int shown;              /* output index on screen, -1 */
     volatile uint64_t frames;
@@ -95,6 +96,10 @@ static OMX_ERRORTYPE on_event(OMX_HANDLETYPE h, void *app, OMX_U32 ev, OMX_U32 d
     } else if (ev == OMX_EventError) {
         fprintf(stderr, "hw_decode: OMX error 0x%x data2=0x%x -> software fallback\n", d1, d2);
         d->failed = 1;
+        /* Timeout / Hardware: the shared Venus core hung (issue #14: slog
+         * VCD_HWTimeoutHandler, then 0x80001011). Freeing that component blocks
+         * forever inside videoCore, which also serves stock's decoders. */
+        if (d1 == OMX_ErrorTimeout || d1 == OMX_ErrorHardware) d->wedged = 1;
     } else if (ev == OMX_EventPortSettingsChanged) {
         OMX_PARAM_PORTDEFINITIONTYPE def;
         omx_init_struct(&def, sizeof(def));
@@ -206,17 +211,21 @@ static OMX_ERRORTYPE on_fill_done(OMX_HANDLETYPE h, void *app, OMX_BUFFERHEADERT
 static int wait_state(altr_hwdec_t *d, OMX_U32 want, int ms, int abort_on_failure)
 {
     struct timespec t;
-    int ok;
+    int ok, timed_out = 0;
     clock_gettime(CLOCK_REALTIME, &t);
     t.tv_sec += ms / 1000;
     t.tv_nsec += (long)(ms % 1000) * 1000000L;
     if (t.tv_nsec >= 1000000000L) { t.tv_sec++; t.tv_nsec -= 1000000000L; }
     pthread_mutex_lock(&d->lock);
     while (d->state != want && !(abort_on_failure && d->failed))
-        if (pthread_cond_timedwait(&d->cond, &d->lock, &t) == ETIMEDOUT) break;
+        if (pthread_cond_timedwait(&d->cond, &d->lock, &t) == ETIMEDOUT) { timed_out = 1; break; }
     ok = d->state == want;
+    /* A component that never answers a state change is a hung core, not a
+     * merely failed decoder: nothing else may be sent to it (issue #14). */
+    if (!ok && timed_out) d->wedged = 1;
     pthread_mutex_unlock(&d->lock);
-    if (!ok) fprintf(stderr, "hw_decode: state %u not reached (at %u)\n", want, d->state);
+    if (!ok) fprintf(stderr, "hw_decode: state %u not reached (at %u)%s\n", want, d->state,
+                     d->wedged ? ", video hardware not answering" : "");
     return ok ? 0 : -1;
 }
 
@@ -376,7 +385,7 @@ static int submit_au(altr_hwdec_t *d, const uint8_t *p, size_t n)
 
 /* ---- public ---- */
 
-altr_hwdec_t *altr_hwdec_create(const altr_view_t *view, int displayable_id)
+altr_hwdec_t *altr_hwdec_create(const altr_view_t *view, int displayable_id, int *stuck)
 {
     OMX_CALLBACKTYPE cbs = { on_event, on_empty_done, on_fill_done };
     omx_fn_init omx_init;
@@ -385,6 +394,7 @@ altr_hwdec_t *altr_hwdec_create(const altr_view_t *view, int displayable_id)
     altr_hwdec_t *d;
     int i, width, height;
 
+    if (stuck) *stuck = 0;
     if (!view || view->view_w <= 0 || view->view_h <= 0 ||
         view->stream_w < view->view_w || view->stream_h < view->view_h ||
         view->crop_x < 0 || view->crop_y < 0 ||
@@ -526,10 +536,9 @@ altr_hwdec_t *altr_hwdec_create(const altr_view_t *view, int displayable_id)
 
 fail:
     fprintf(stderr, "hw_decode: setup failed -> software path\n");
-    if (altr_hwdec_destroy(d) != 0) {
-        fprintf(stderr, "hw_decode: exiting so the monitor restarts a clean renderer\n");
-        _exit(3);
-    }
+    /* A stuck decoder is left to process exit; the caller switches hardware
+     * decode off first, so the restarted renderer does not open it again. */
+    if (altr_hwdec_destroy(d) != 0 && stuck) *stuck = 1;
     return NULL;
 }
 
@@ -573,6 +582,15 @@ int altr_hwdec_destroy(altr_hwdec_t *d)
         pthread_mutex_lock(&d->lock);
         d->executing = 0;
         pthread_mutex_unlock(&d->lock);
+        if (d->wedged) {
+            /* Issue #14 (log 001): after VCD_HWTimeoutHandler the Idle->Loaded,
+             * FreeBuffer and FreeHandle calls never returned and videoCore stayed
+             * deadlocked under stock's decoders until the unit rebooted. Only
+             * process exit releases this session. */
+            fprintf(stderr, "hw_decode: video hardware not answering (state %u); "
+                    "leaving the decoder to process exit\n", d->state);
+            return -1;
+        }
         if (d->state == OMX_StateExecuting) {
             d->c->SendCommand(d->h, OMX_CommandStateSet, OMX_StateIdle, NULL);
             if (wait_state(d, OMX_StateIdle, 2000, 0) != 0) stuck = 1;
@@ -608,7 +626,8 @@ int altr_hwdec_destroy(altr_hwdec_t *d)
 
 #else /* !PLATFORM_QNX: host build has no OMX/screen */
 
-altr_hwdec_t *altr_hwdec_create(const altr_view_t *v, int id) { (void)v; (void)id; return NULL; }
+altr_hwdec_t *altr_hwdec_create(const altr_view_t *v, int id, int *stuck)
+{ (void)v; (void)id; if (stuck) *stuck = 0; return NULL; }
 int altr_hwdec_feed(altr_hwdec_t *d, const uint8_t *p, size_t n) { (void)d; (void)p; (void)n; return -1; }
 uint64_t altr_hwdec_frames(altr_hwdec_t *d) { (void)d; return 0; }
 int altr_hwdec_failed(altr_hwdec_t *d) { (void)d; return 1; }

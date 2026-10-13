@@ -61,6 +61,7 @@ What the car taught us:
 | 015/016 | same, usage 0x86 (no OVERLAY) | decoder **never wrote a picture**, stopped returning input, teardown hung: the decoder needs stock's 0x486 allocation |
 | 017 | hidden 0x486 decode window + `screen_blit` to RGBA window 99 | first picture decoded and blitted; then `FillThisBuffer` on the same header inside its own `FillBufferDone` was rejected. Fixed: hand back the *previous* picture's buffer (as in 011). Teardown no longer mistakes a failed decoder for a stuck one. |
 | 018 | same, buffer handed back one picture later | **works**: 3120 pictures in one session, renderer CPU ≈2.9 ms/picture (software: ≈24 ms). The only error, `0x80001018` (IncorrectStateOperation), was a picture in flight during teardown - now ignored. |
+| issue #14 | Android Auto 1080p decoder opened 64 s after boot (phone route already active, so the cluster stream starts with the session) | slog `VCD_HWTimeoutHandler` 2 s later, then `0x80001011` (Timeout), Executing never reached. The teardown (Idle->Loaded, FreeBuffer, FreeHandle) **never returned**: `videoCore` threads deadlocked on a MUTEX, HMI and the cockpit's Audi map frozen, watchdog reboot minutes later. Car logs 020/021 opened the same decoder at ~100 s without trouble. |
 
 Current design:
 
@@ -77,6 +78,17 @@ Fail-safe: a blit error, no picture 2 s after the first input, 5 input stalls in
 error or a port change -> `hw_decode:` reason, HW decoder switched OFF, software path. A decoder
 that will not leave Executing is never freed (its DMA could hit freed memory): the renderer exits
 and `carplay_monitor.sh` restarts a clean one.
+
+Hung video hardware (issue #14):
+
+- **Boot settle time.** No hardware decoder before 120 s of uptime (`ALTR_HW_MIN_UPTIME_S`).
+  A session that starts earlier decodes in software, then reconnects to the tee once at 120 s
+  and switches to hardware (`.live` is kept, so the cockpit does not flip back to the Audi map).
+- **Wedged decoder.** A state change that times out, or an OMX `Timeout` / `Hardware` error,
+  marks the component as wedged: no further OMX call is made (they block inside `videoCore`).
+  The renderer switches hardware decode OFF and exits; the restarted renderer uses software.
+- **Watchdog.** Setup (10 s), teardown (8 s) and each feed (4 s) have a deadline. An OMX call
+  that is still blocked after it switches hardware decode OFF and exits the process.
 
 ## Plan
 

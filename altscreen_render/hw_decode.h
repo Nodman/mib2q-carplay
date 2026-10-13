@@ -25,8 +25,10 @@ typedef struct altr_hwdec altr_hwdec_t;
 /* Open the decoder at view->stream_w x stream_h and its managed cluster window
  * (displayable id, view->view_w x view_h). Each picture's crop rectangle is
  * blitted 1:1 into the window. NULL = use the software path (the reason is
- * logged to stderr). */
-altr_hwdec_t *altr_hwdec_create(const altr_view_t *view, int displayable_id);
+ * logged to stderr). *stuck = 1 with NULL: the video hardware stopped answering
+ * and the half-open decoder was left allocated; the caller must switch hardware
+ * decode off and restart the process. */
+altr_hwdec_t *altr_hwdec_create(const altr_view_t *view, int displayable_id, int *stuck);
 
 /* Feed Annex-B bytes in any chunking. <0 = the decoder failed; destroy it and
  * fall back. */
@@ -38,8 +40,9 @@ uint64_t altr_hwdec_frames(altr_hwdec_t *d);
 /* 1 once the component reported an error or an unsupported port change. */
 int altr_hwdec_failed(altr_hwdec_t *d);
 
-/* 0 = released. -1 = the decoder never left Executing; its buffers were left
- * allocated on purpose and the caller must restart the process. */
+/* 0 = released. -1 = the decoder never left Executing or the video hardware
+ * stopped answering; its buffers were left allocated on purpose and the caller
+ * must restart the process. */
 int altr_hwdec_destroy(altr_hwdec_t *d);
 
 #endif /* ALTR_HW_DECODE_H */

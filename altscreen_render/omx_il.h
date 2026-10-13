@@ -127,6 +127,8 @@ typedef char omx_hdr_flags_at_64[(!OMX_IL_ARM32 || offsetof(OMX_BUFFERHEADERTYPE
 #define OMX_IndexParamVideoPortFormat  0x06000001u
 #define OMX_VIDEO_CodingAVC            7u
 #define OMX_ErrorNoMore                0x8000100Eu
+#define OMX_ErrorHardware              0x80001009u
+#define OMX_ErrorTimeout               0x80001011u
 
 #define OMX_CommandStateSet    0u
 #define OMX_CommandFlush       1u

@@ -41,6 +41,8 @@
  *                   which sends almost no pictures while its map does not change
  *                   (car log 020: one picture every ~6 s), so a picture gap is not
  *                   a lost stream there; the tee closing is
+ *   ALTR_HW_MIN_UPTIME_S (default 120) — no hardware decoder before this uptime;
+ *                   software decode until then, then one reconnect to hardware
  *
  * Copyright (c) 2026
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -50,6 +52,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -189,6 +192,8 @@ struct app {
     altr_hwdec_t *hw;         /* hardware decode session, NULL = software path */
     uint64_t hw_frames_seen;
     int hw_tried;             /* hardware attempted on this tee connection */
+    int hw_deferred;          /* software decode only because of the boot settle time */
+    uint64_t hw_min_uptime_ms;
 #endif
 };
 
@@ -387,13 +392,84 @@ static void hw_switch_off(const struct source *s)
                  s->hw_off_marker, errno);
 }
 
+/* Watchdog for calls into the OMX component. They are IPC to videoCore, which
+ * the stock decoders share; once the Venus core hangs (issue #14: slog
+ * VCD_HWTimeoutHandler) a call can block for good, and with this process stuck
+ * inside videoCore the HMI and the cockpit map froze until the unit rebooted.
+ * A call that outlives its deadline switches hardware decode OFF and exits;
+ * carplay_monitor.sh then starts a clean renderer on the software path. */
+static pthread_mutex_t g_wd_lock = PTHREAD_MUTEX_INITIALIZER;
+static uint64_t g_wd_deadline_ms;     /* 0 = disarmed */
+static const struct source *g_wd_src;
+static const char *g_wd_what;
+
+static void *wd_main(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        uint64_t deadline;
+        const struct source *s;
+        const char *what;
+        usleep(250000);
+        pthread_mutex_lock(&g_wd_lock);
+        deadline = g_wd_deadline_ms;
+        s = g_wd_src;
+        what = g_wd_what;
+        pthread_mutex_unlock(&g_wd_lock);
+        if (!deadline || now_ms() < deadline) continue;
+        fprintf(stderr, "altscreen_render: %s hardware decoder blocked in %s; HW decoder switched OFF, "
+                "exiting for a clean restart\n", s->name, what);
+        hw_switch_off(s);
+        set_live(0);
+        write_status("hw_stuck", 0, 0, 0);
+        _exit(3);
+    }
+    return NULL;
+}
+
+static void wd_arm(const struct source *s, const char *what, unsigned ms)
+{
+    static int started;
+    if (!started) {
+        pthread_t t;
+        pthread_attr_t at;
+        pthread_attr_init(&at);
+        pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
+        started = pthread_create(&t, &at, wd_main, NULL) == 0;
+        pthread_attr_destroy(&at);
+        if (!started) fprintf(stderr, "altscreen_render: hardware decoder watchdog not started\n");
+    }
+    pthread_mutex_lock(&g_wd_lock);
+    g_wd_src = s;
+    g_wd_what = what;
+    g_wd_deadline_ms = now_ms() + ms;
+    pthread_mutex_unlock(&g_wd_lock);
+}
+
+static void wd_disarm(void)
+{
+    pthread_mutex_lock(&g_wd_lock);
+    g_wd_deadline_ms = 0;
+    pthread_mutex_unlock(&g_wd_lock);
+}
+
+/* Setup waits up to 2 s for Idle and 2 s for Executing, teardown 2 s each for
+ * Idle and Loaded, one feed at most ~1 s of busy input; the deadlines leave margin. */
+#define ALTR_WD_CREATE_MS  10000u
+#define ALTR_WD_DESTROY_MS 8000u
+#define ALTR_WD_FEED_MS    4000u
+
 /* Close the hardware session. A decoder stuck in Executing keeps our buffers:
  * switch hardware decode OFF and exit, so carplay_monitor.sh restarts a clean
  * renderer (software path) instead of this one hanging or reusing them. */
 static void hw_close(struct app *a)
 {
+    int rc;
     if (!a->hw) return;
-    if (altr_hwdec_destroy(a->hw) != 0) {
+    wd_arm(a->src, "teardown", ALTR_WD_DESTROY_MS);
+    rc = altr_hwdec_destroy(a->hw);
+    wd_disarm();
+    if (rc != 0) {
         hw_switch_off(a->src);
         set_live(0);
         fprintf(stderr, "altscreen_render: stuck hardware decoder; HW decoder switched OFF, "
@@ -498,6 +574,10 @@ int main(void)
     a.ctx = EGL_NO_CONTEXT;
     a.disp_id = env_i("ALTR_DISPLAYABLE_ID", 99);
     {
+        int s = env_i("ALTR_HW_MIN_UPTIME_S", 120);
+        a.hw_min_uptime_ms = s > 0 ? (uint64_t)s * 1000u : 0;   /* CLOCK_MONOTONIC = uptime on QNX */
+    }
+    {
         int any_hw = 0;
         for (k = 0; k < nsrc; k++) any_hw |= hw_wanted(&src[k]);
         if (any_hw) {
@@ -529,6 +609,7 @@ int main(void)
     while (!g_stop) {
         const struct source *s = NULL;
         int fd = -1;
+        int upgrade = 0;            /* planned reconnect from software to hardware decode */
         omx_probe_poll(a.surface_w, a.surface_h);
         /* Only one phone session exists at a time, so at most one tee listens. */
         for (k = 0; k < nsrc && fd < 0; k++) {
@@ -554,6 +635,16 @@ int main(void)
             uint64_t now;
             if (g_stop) { close(fd); goto done; }
             omx_probe_poll(a.surface_w, a.surface_h);
+#ifdef PLATFORM_QNX
+            if (a.hw_deferred && now_ms() >= a.hw_min_uptime_ms) {
+                /* The tee replays from the last keyframe, so the reconnect costs
+                 * one picture; .live is kept so the cockpit does not switch away. */
+                fprintf(stderr, "altscreen_render: boot settle time over; reconnecting %s for "
+                        "hardware decode\n", s->name);
+                upgrade = 1;
+                break;
+            }
+#endif
             fd_set rd; struct timeval tv;
             FD_ZERO(&rd); FD_SET(fd, &rd);
             tv.tv_sec = 0; tv.tv_usec = 200000;
@@ -562,20 +653,47 @@ int main(void)
                 ssize_t n = recv(fd, buf, sizeof(buf), 0);
                 if (n <= 0) break;
 #ifdef PLATFORM_QNX
-                if (!a.hw && !a.hw_tried && hw_wanted(s)) {
-                    a.hw_tried = 1;
-                    gl_shutdown(&a);             /* frees displayable 99 for the decoder */
-                    a.hw = altr_hwdec_create(&s->view, a.disp_id);
-                    a.hw_frames_seen = 0;
-                    if (!a.hw) {
-                        hw_give_up(&a, "setup failed");
-                        ensure_gl(&a);
-                        break;                  /* reconnect: the hook re-primes with a fresh IDR */
+                if (!a.hw && !a.hw_tried && !a.hw_deferred && hw_wanted(s)) {
+                    if (now_ms() < a.hw_min_uptime_ms) {
+                        /* Issue #14: a 1080p Android Auto decoder opened ~64 s after
+                         * boot (phone route already active, so the cluster stream
+                         * starts with the session) hung the shared Venus core
+                         * (VCD_HWTimeoutHandler) while stock was still bringing up
+                         * its own video sessions. Car logs 020/021 opened it at
+                         * ~100 s without trouble. */
+                        fprintf(stderr, "altscreen_render: uptime %llu s < %llu s: %s on software "
+                                "decode until the video hardware has settled\n",
+                                (unsigned long long)(now_ms() / 1000u),
+                                (unsigned long long)(a.hw_min_uptime_ms / 1000u), s->name);
+                        a.hw_deferred = 1;
+                    } else {
+                        int stuck = 0;
+                        a.hw_tried = 1;
+                        gl_shutdown(&a);             /* frees displayable 99 for the decoder */
+                        wd_arm(s, "setup", ALTR_WD_CREATE_MS);
+                        a.hw = altr_hwdec_create(&s->view, a.disp_id, &stuck);
+                        wd_disarm();
+                        a.hw_frames_seen = 0;
+                        if (!a.hw) {
+                            hw_give_up(&a, "setup failed");
+                            if (stuck) {
+                                set_live(0);
+                                fprintf(stderr, "altscreen_render: video hardware not answering; "
+                                        "exiting for a clean restart\n");
+                                _exit(3);
+                            }
+                            ensure_gl(&a);
+                            break;                  /* reconnect: the hook re-primes with a fresh IDR */
+                        }
                     }
                 }
                 if (a.hw) {
                     uint64_t hf;
-                    if (altr_hwdec_feed(a.hw, buf, (size_t)n) < 0 || altr_hwdec_failed(a.hw)) {
+                    int rc;
+                    wd_arm(s, "decode", ALTR_WD_FEED_MS);
+                    rc = altr_hwdec_feed(a.hw, buf, (size_t)n);
+                    wd_disarm();
+                    if (rc < 0 || altr_hwdec_failed(a.hw)) {
                         hw_give_up(&a, "failed");
                         ensure_gl(&a);
                         break;
@@ -613,9 +731,10 @@ int main(void)
 #ifdef PLATFORM_QNX
         hw_close(&a);
         a.hw_tried = 0;
+        a.hw_deferred = 0;
 #endif
         altr_decode_flush(dec);
-        set_live(0);
+        if (!upgrade) set_live(0);
         a.last_shown_ms = 0;
         write_status("tee_closed", a.last_w, a.last_h, a.frames);
         fprintf(stderr, "altscreen_render: %s tee closed; frames so far=%llu\n",
