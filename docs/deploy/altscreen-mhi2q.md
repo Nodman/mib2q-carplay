@@ -150,7 +150,7 @@ Hook (`libaltscreen111_mhi2q.so`), env in the carplay child:
 | `ALTSCREEN111_PORT` | 7100 | stream-111 port (§4); `/mnt/app/mibr-carplay111.port` wins |
 | `ALTSCREEN111_WIDTH` / `_HEIGHT` | 1440 / 540 | advertised secondary display |
 | `ALTSCREEN111_FPS` | 30 | advertised max frame rate (`/mnt/app/root/mibr-carplay111-fps` overrides, 5-60; above 30 at own risk, some MHI2Q builds crash at 60) |
-| `ALTSCREEN111_WIDTH_MM` / `_HEIGHT_MM` | 320 / 120 | advertised physical size, as MIBSI reports; iOS scales the cluster UI from it (`/mnt/app/root/mibr-carplay111-physical` with `w h` in mm overrides, e.g. `echo 290 108 > …` for the real panel size) |
+| `ALTSCREEN111_WIDTH_MM` / `_HEIGHT_MM` | 290 / 108 | advertised physical size; iOS scales the cluster UI from it (`/mnt/app/root/mibr-carplay111-physical` with `w h` in mm overrides, e.g. `echo 320 120 > …` for the larger MIBSI geometry) |
 | `ALTSCREEN111_TEE_PORT` | 19820 | loopback Annex-B tee |
 | `ALTSCREEN111_INLINE_HOOKS` | 0 | 1 = also install inline prologue hooks if PLT interposition is not on the call path |
 

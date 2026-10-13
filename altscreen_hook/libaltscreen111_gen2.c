@@ -107,13 +107,7 @@
 #define ALT111_DEFAULT_ALLOW_EPHEMERAL 0
 #define ALT111_DEFAULT_WIDTH 1440
 #define ALT111_DEFAULT_HEIGHT 540
-/*
- * Physical size: 320x120 mm, as MIBSI (MU1329) and chefranov's A3 package report
- * for this 12.3" VC, not the real ~290x108 mm panel. iOS scales the cluster UI
- * from it; with 290 mm the Google Maps logo / Sygic puck sat behind the VC bottom
- * bar (issue #9). Override with /mnt/app/root/mibr-carplay111-physical ("w h").
- */
-#define ALT111_DEFAULT_WIDTH_MM 320
+#define ALT111_DEFAULT_WIDTH_MM 290
 /*
  * Defaults now = the commercial MHI2Q package's view-area table (MU1329 Cinemo,
  * libmhi2qcarplaycluster.so, same 1440x540 canvas; quoted by joeyQuery/
@@ -1157,14 +1151,14 @@ static int current_alt_port(void)
 }
 
 /*
- * Senders that must not see the AltScreen advertisement. The wireless CarPlay
- * dongle of log sets 005-010 always identifies as model=iPhone9,1 iOS 18D70
- * (sourceVersion 535.3) whatever phone is behind it, never requests stream 111,
- * and with our /info it fails to connect or drops after seconds; with the stock
- * /info (altscreen_off) it is stable. The session's first SETUP carries model
- * and osBuildVersion and arrives before /info, so the advertisement can be
- * skipped for just that sender. More entries, one "model osBuildVersion" per
- * line ("*" = any build), in /mnt/app/root/mibr-carplay111-noadvertise.senders.
+ * Senders that must not see the AltScreen advertisement.
+ *
+ * The wireless CarPlay dongle (model=iPhone9,1 iOS 18D70, a fixed persona for
+ * whatever phone is behind it) is force-suppressed here: advertising the cluster
+ * to it makes its CarPlay session drop within seconds, so it is pinned to the
+ * single-display path and served the stock /info. Other senders can be suppressed
+ * via /mnt/app/root/mibr-carplay111-noadvertise.senders, one "model osBuildVersion"
+ * per line ("*" = any build).
  */
 static const char *g_noadvertise_senders_path = "/mnt/app/root/mibr-carplay111-noadvertise.senders";
 static int g_sender_noadvertise;
@@ -1174,6 +1168,10 @@ static int sender_listed(const char *model, const char *build)
     char line[128], m[64], b[64];
     FILE *f;
     int hit = 0;
+    /* Built-in guard: the wireless dongle (iPhone9,1/18D70) breaks on a 2nd
+     * (cluster) display -- advertising it makes the dongle's CarPlay session
+     * drop within seconds -- so never advertise the AltScreen to it; pin it to
+     * the single-display path that connects. */
     if(strcmp(model,"iPhone9,1")==0 && strcmp(build,"18D70")==0) return 1;
     f=fopen(g_noadvertise_senders_path,"r");
     if(!f) return 0;
